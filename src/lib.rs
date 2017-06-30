@@ -1,3 +1,5 @@
+//! Apache-2 licensed Ethash implementation.
+
 // The reference algorithm used is from https://github.com/ethereum/wiki/wiki/Ethash
 
 extern crate sha3;
@@ -56,6 +58,7 @@ fn fill_sha256(input: &[u8], a: &mut [u8], from_index: usize) {
     }
 }
 
+/// Make an Ethash cache using the given seed.
 pub fn make_cache(cache: &mut [u8], seed: [u8; 64]) {
     let n = cache.len() / HASH_BYTES;
     fill_sha512(&seed, cache, 0);
@@ -76,9 +79,182 @@ pub fn make_cache(cache: &mut [u8], seed: [u8; 64]) {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
+const FNV_PRIME: u32 = 0x01000193;
+fn fnv(v1: u32, v2: u32) -> u32 {
+    v1.saturating_mul(FNV_PRIME).bitxor(v2)
+}
+
+fn u8s_to_u32(a: &[u8]) -> u32 {
+    let n = a.len();
+    (a[0] as u32) + (a[1] as u32) << 8 +
+        (a[2] as u32) << 16 + (a[3] as u32) << 24
+}
+
+fn calc_dataset_item(cache: &[u8], i: usize) -> [u8; 64] {
+    let n = cache.len();
+    let r = HASH_BYTES / WORD_BYTES;
+    let mut mix = [0u8; 64];
+    for j in 0..64 {
+        mix[j] = cache[i * 64 + j];
     }
+    mix[0] = mix[0].bitxor((i & (u8::max_value() as usize)) as u8);
+    {
+        let mut remix = [0u8; 64];
+        for j in 0..64 {
+            remix[j] = mix[j];
+        }
+        fill_sha512(&remix, &mut mix, 0);
+    }
+    for j in 0..DATASET_PARENTS {
+        let cache_index = fnv((i.bitxor(j) & (u32::max_value() as usize)) as u32,
+                              mix[j & r] as u32) as usize;
+        for k in 0..mix.len() {
+            mix[k] = fnv(
+                mix[k] as u32,
+                u8s_to_u32(&cache[(cache_index % n) * 64 .. (cache_index * n + 1) * 64])
+            ) as u8;
+        }
+    }
+    let mut z = [0u8; 64];
+    fill_sha512(&mix, &mut z, 0);
+    z
+}
+
+/// Make an Ethash dataset using the given hash.
+pub fn make_dataset(dataset: &mut [u8], cache: &[u8]) {
+    let n = dataset.len() / HASH_BYTES;
+    for i in 0..n {
+        let z = calc_dataset_item(cache, i);
+        for j in 0..64 {
+            dataset[i * 64 + j] = z[j];
+        }
+    }
+}
+
+/// "Main" function of Ethash, calculating the mix digest and result given the
+/// header and nonce.
+pub fn hashimoto<F: Fn(usize) -> [u8; 64]>(
+    header: &[u8], nonce: u64, full_size: usize, lookup: F
+) -> ([u8; MIX_BYTES], [u8; 32]) {
+    let n = full_size / HASH_BYTES;
+    let w = MIX_BYTES / WORD_BYTES;
+    const MIXHASHES: usize = MIX_BYTES / HASH_BYTES;
+    let nonce = {
+        let mut a = nonce;
+        let mut r = [0u8; 8];
+        for i in 0..8 {
+            r[i] = (a & (u8::max_value() as u64)) as u8;
+            a = a >> 8;
+        }
+        r
+    };
+    let s = {
+        let mut hasher = Keccak512::default();
+        hasher.input(header);
+        hasher.input(&nonce);
+        hasher.result()
+    };
+    let mut mix = [0u8; MIX_BYTES];
+    for i in 0..MIXHASHES {
+        for j in 0..64 {
+            mix[i * MIXHASHES] = s[j];
+        }
+    }
+    for i in 0..ACCESSES {
+        let p = (fnv(i.bitxor(s[0] as usize) as u32,
+                     mix[i % w] as u32) as usize) % (n / MIXHASHES) * MIXHASHES;
+        let newdata = [0u8; MIX_BYTES];
+        for j in 0..MIXHASHES {
+            let v = lookup(p + j);
+            let mut newdata = [0u8; MIXHASHES];
+            for k in 0..64 {
+                newdata[j * 64 + k] = v[k];
+            }
+        }
+        for j in 0..mix.len() {
+            mix[j] = fnv(
+                mix[j] as u32,
+                u8s_to_u32(&newdata[j * 32 .. (j + 1) * 32])
+            ) as u8;
+        }
+    }
+    let mut cmix = [0u8; MIX_BYTES];
+    for i in 0..(MIX_BYTES / 4) {
+        cmix[i] = fnv(fnv(fnv(mix[i] as u32, mix[i + 1] as u32),
+                          mix[i + 2] as u32), mix[i + 3] as u32) as u8;
+    }
+    let result = {
+        let mut hasher = Keccak256::default();
+        hasher.input(&s);
+        hasher.input(&cmix);
+        let r = hasher.result();
+        let mut z = [0u8; 32];
+        for i in 0..32 {
+            z[i] = r[i];
+        }
+        z
+    };
+    (cmix, result)
+}
+
+/// Ethash used by a light client. Only stores the 16MB cache rather than the
+/// full dataset.
+pub fn hashimoto_light(
+    header: &[u8], nonce: u64, full_size: usize, cache: &[u8]
+) -> ([u8; MIX_BYTES], [u8; 32]) {
+    hashimoto(header, nonce, full_size, |i| {
+        calc_dataset_item(cache, i)
+    })
+}
+
+/// Ethash used by a full client. Stores the whole dataset in memory.
+pub fn hashimoto_full(
+    header: &[u8], nonce: u64, full_size: usize, dataset: &[u8]
+) -> ([u8; MIX_BYTES], [u8; 32]) {
+    hashimoto(header, nonce, full_size, |i| {
+        let mut r = [0u8; 64];
+        for j in 0..64 {
+            r[j] = dataset[i * 64 + j];
+        }
+        r
+    })
+}
+
+fn is_target(result: &[u8; 32], target: &[u8; 32]) -> bool {
+    for i in 0..32 {
+        if result[i] > target[i] {
+            return true;
+        }
+        if result[i] == target[i] {
+            continue;
+        }
+        if result[i] < target[i] {
+            return false;
+        }
+    }
+    return false;
+}
+
+/// Mine a nonce given the header, dataset, and the target. Target is derived
+/// from the difficulty.
+pub fn mine_target(
+    header: &[u8], nonce_start: u64, full_size: usize, dataset: &[u8], target: &[u8; 32]
+) -> u64 {
+    let mut nonce_current = nonce_start;
+    loop {
+        let (_, result) = hashimoto_full(header, nonce_current, full_size, dataset);
+        if is_target(&result, target) {
+            return nonce_current;
+        }
+        nonce_current += 1;
+    }
+}
+
+/// Get the seedhash for a given block number.
+pub fn get_seedhash(block_number: usize) -> [u8; 32] {
+    let mut s = [0u8; 32];
+    for i in 0..(block_number / EPOCH_LENGTH) {
+        fill_sha256(&s.clone(), &mut s, 0);
+    }
+    s
 }
