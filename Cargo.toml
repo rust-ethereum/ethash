@@ -3,6 +3,7 @@ name = "ethash"
 description = "An Apache-licensed Ethash implementation."
 version = "0.1.0"
 authors = ["Wei Tang <hi@that.world>"]
+license = "Apache-2.0"
 
 [dependencies]
 sha3 = "0.6.0"
