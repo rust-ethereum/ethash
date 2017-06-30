@@ -5,3 +5,4 @@ version = "0.1.0"
 authors = ["Wei Tang <hi@that.world>"]
 
 [dependencies]
+sha3 = "0.6.0"
