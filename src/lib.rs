@@ -71,8 +71,6 @@ fn fill_sha256(input: &[u8], a: &mut [u8], from_index: usize) {
 
 /// Make an Ethash cache using the given seed.
 pub fn make_cache(cache: &mut [u8], seed: H256) {
-    use byteorder::{LittleEndian, ReadBytesExt};
-
     assert!(cache.len() % HASH_BYTES == 0);
     let n = cache.len() / HASH_BYTES;
 
@@ -100,7 +98,27 @@ pub fn make_cache(cache: &mut [u8], seed: H256) {
 
 const FNV_PRIME: u32 = 0x01000193;
 fn fnv(v1: u32, v2: u32) -> u32 {
-    v1.saturating_mul(FNV_PRIME).bitxor(v2)
+    let v1 = v1 as u64;
+    let v2 = v2 as u64;
+
+    ((((v1 * 0x01000000 | 0) + (v1 * 0x193 | 0)) ^ v2) >> 0) as u32
+}
+
+fn fnv64(a: [u8; 64], b: [u8; 64]) -> [u8; 64] {
+    let mut r = [0u8; 64];
+    for i in 0..(64 / 4) {
+        let j = i * 4;
+        let a32 = (&a[j..]).read_u32::<LittleEndian>().unwrap();
+        let b32 = (&b[j..]).read_u32::<LittleEndian>().unwrap();
+
+        println!("a32: {}, b32: {}", a32, b32);
+        println!("fnv: {}", fnv(a32, b32));
+
+        (&mut r[j..]).write_u32::<LittleEndian>(
+            fnv((&a[j..]).read_u32::<LittleEndian>().unwrap(),
+                (&b[j..]).read_u32::<LittleEndian>().unwrap()));
+    }
+    r
 }
 
 fn u8s_to_u32(a: &[u8]) -> u32 {
@@ -110,13 +128,16 @@ fn u8s_to_u32(a: &[u8]) -> u32 {
 }
 
 fn calc_dataset_item(cache: &[u8], i: usize) -> H512 {
-    let n = cache.len();
+    debug_assert!(cache.len() % 64 == 0);
+
+    let n = cache.len() / 64;
     let r = HASH_BYTES / WORD_BYTES;
     let mut mix = [0u8; 64];
     for j in 0..64 {
-        mix[j] = cache[i * 64 + j];
+        mix[j] = cache[(i % n) * 64 + j];
     }
-    mix[0] = mix[0].bitxor((i & (u8::max_value() as usize)) as u8);
+    let mix_first32 = mix.as_ref().read_u32::<LittleEndian>().unwrap().bitxor(i as u32);
+    mix.as_mut().write_u32::<LittleEndian>(mix_first32);
     {
         let mut remix = [0u8; 64];
         for j in 0..64 {
@@ -126,13 +147,13 @@ fn calc_dataset_item(cache: &[u8], i: usize) -> H512 {
     }
     for j in 0..DATASET_PARENTS {
         let cache_index = fnv((i.bitxor(j) & (u32::max_value() as usize)) as u32,
-                              mix[j & r] as u32) as usize;
-        for k in 0..mix.len() {
-            mix[k] = fnv(
-                mix[k] as u32,
-                u8s_to_u32(&cache[(cache_index % n) * 64 .. (cache_index * n + 1) * 64])
-            ) as u8;
+                              (&mix[(j % r * 4)..]).read_u32::<LittleEndian>().unwrap()) as usize;
+        let mut item = [0u8; 64];
+        let cache_index = cache_index % n;
+        for i in 0..64 {
+            item[i] = cache[cache_index * 64 + i];
         }
+        mix = fnv64(mix, item);
     }
     let mut z = [0u8; 64];
     fill_sha512(&mix, &mut z, 0);
