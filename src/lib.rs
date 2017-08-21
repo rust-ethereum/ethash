@@ -30,6 +30,7 @@ const ACCESSES: usize = 64;
 
 pub const EPOCH_LENGTH: usize = 30000;
 
+/// Get the cache size required given the block number.
 pub fn get_cache_size(block_number: U256) -> usize {
     let block_number = block_number.as_usize();
 
@@ -41,6 +42,7 @@ pub fn get_cache_size(block_number: U256) -> usize {
     sz
 }
 
+/// Get the full dataset size given the block number.
 pub fn get_full_size(block_number: U256) -> usize {
     let block_number = block_number.as_usize();
 
@@ -139,6 +141,7 @@ fn u8s_to_u32(a: &[u8]) -> u32 {
         (a[2] as u32) << 16 + (a[3] as u32) << 24
 }
 
+/// Calculate the dataset item.
 pub fn calc_dataset_item(cache: &[u8], i: usize) -> H512 {
     debug_assert!(cache.len() % 64 == 0);
 
