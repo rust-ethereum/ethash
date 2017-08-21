@@ -28,6 +28,7 @@ const DATASET_PARENTS: usize = 256;
 const CACHE_ROUNDS: usize = 3;
 const ACCESSES: usize = 64;
 
+/// Epoch length where cache and dataset is unchanged.
 pub const EPOCH_LENGTH: usize = 30000;
 
 /// Get the cache size required given the block number.
