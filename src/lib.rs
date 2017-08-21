@@ -5,6 +5,7 @@
 extern crate sha3;
 extern crate rlp;
 extern crate bigint;
+extern crate byteorder;
 
 mod miller_rabin;
 
@@ -70,21 +71,29 @@ fn fill_sha256(input: &[u8], a: &mut [u8], from_index: usize) {
 
 /// Make an Ethash cache using the given seed.
 pub fn make_cache(cache: &mut [u8], seed: H256) {
+    use byteorder::{LittleEndian, ReadBytesExt};
+
+    assert!(cache.len() % HASH_BYTES == 0);
     let n = cache.len() / HASH_BYTES;
+
     fill_sha512(&seed, cache, 0);
+
     for i in 1..n {
         let (last, next) = cache.split_at_mut(i * 64);
-        fill_sha512(last, next, 0);
+        fill_sha512(&last[(last.len()-64)..], next, 0);
     }
+
     for _ in 0..CACHE_ROUNDS {
         for i in 0..n {
-            let v = (cache[i * 64] as usize) % n;
+            let v = ((&cache[(i * 64)..]).read_u32::<LittleEndian>().unwrap() as usize) % n;
+
             let mut r = [0u8; 64];
             for j in 0..64 {
-                let a = cache[((i - 1 + n) % n) * 64 + j];
+                let a = cache[((n + i - 1) % n) * 64 + j];
                 let b = cache[v * 64 + j];
                 r[j] = a.bitxor(b);
             }
+            fill_sha512(&r, cache, i * 64);
         }
     }
 }
@@ -256,8 +265,10 @@ pub fn get_seedhash(block_number: U256) -> H256 {
     let block_number = block_number.as_usize();
 
     let mut s = [0u8; 32];
-    for i in 0..(block_number / EPOCH_LENGTH) {
-        fill_sha256(&s.clone(), &mut s, 0);
+    if block_number != 0 {
+        for i in 0..(block_number / EPOCH_LENGTH) {
+            fill_sha256(&s.clone(), &mut s, 0);
+        }
     }
     H256::from(s.as_ref())
 }
