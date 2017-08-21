@@ -6,4 +6,6 @@ authors = ["Wei Tang <hi@that.world>"]
 license = "Apache-2.0"
 
 [dependencies]
-sha3 = "0.6.0"
+etcommon-bigint = "0.2"
+etcommon-rlp = "0.2"
+sha3 = "0.6"

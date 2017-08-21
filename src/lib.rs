@@ -3,26 +3,34 @@
 // The reference algorithm used is from https://github.com/ethereum/wiki/wiki/Ethash
 
 extern crate sha3;
+extern crate rlp;
+extern crate bigint;
 
 mod miller_rabin;
+
 use miller_rabin::is_prime;
 use sha3::{Digest, Keccak256, Keccak512};
+use bigint::{H1024, U256, H256, H64, H512};
+use rlp::Encodable;
 use std::ops::BitXor;
 
-const WORD_BYTES: usize = 4;
 const DATASET_BYTES_INIT: usize = 1073741824; // 2 to the power of 30.
 const DATASET_BYTES_GROWTH: usize = 8388608; // 2 to the power of 23.
 const CACHE_BYTES_INIT: usize = 16777216; // 2 to the power of 24.
 const CACHE_BYTES_GROWTH: usize = 131072; // 2 to the power of 17.
 const CACHE_MULTIPLIER: usize = 1024;
-const EPOCH_LENGTH: usize = 30000;
 const MIX_BYTES: usize = 128;
+const WORD_BYTES: usize = 4;
 const HASH_BYTES: usize = 64;
 const DATASET_PARENTS: usize = 256;
 const CACHE_ROUNDS: usize = 3;
 const ACCESSES: usize = 64;
 
-fn get_cache_size(block_number: usize) -> usize {
+pub const EPOCH_LENGTH: usize = 30000;
+
+pub fn get_cache_size(block_number: U256) -> usize {
+    let block_number = block_number.as_usize();
+
     let mut sz = CACHE_BYTES_INIT + CACHE_BYTES_GROWTH * (block_number / EPOCH_LENGTH);
     sz -= HASH_BYTES;
     while !is_prime(sz / HASH_BYTES) {
@@ -31,7 +39,9 @@ fn get_cache_size(block_number: usize) -> usize {
     sz
 }
 
-fn get_full_size(block_number: usize) -> usize {
+pub fn get_full_size(block_number: U256) -> usize {
+    let block_number = block_number.as_usize();
+
     let mut sz = DATASET_BYTES_INIT + DATASET_BYTES_GROWTH * (block_number / EPOCH_LENGTH);
     sz -= MIX_BYTES;
     while !is_prime(sz / MIX_BYTES) {
@@ -59,7 +69,7 @@ fn fill_sha256(input: &[u8], a: &mut [u8], from_index: usize) {
 }
 
 /// Make an Ethash cache using the given seed.
-pub fn make_cache(cache: &mut [u8], seed: [u8; 64]) {
+pub fn make_cache(cache: &mut [u8], seed: H256) {
     let n = cache.len() / HASH_BYTES;
     fill_sha512(&seed, cache, 0);
     for i in 1..n {
@@ -90,7 +100,7 @@ fn u8s_to_u32(a: &[u8]) -> u32 {
         (a[2] as u32) << 16 + (a[3] as u32) << 24
 }
 
-fn calc_dataset_item(cache: &[u8], i: usize) -> [u8; 64] {
+fn calc_dataset_item(cache: &[u8], i: usize) -> H512 {
     let n = cache.len();
     let r = HASH_BYTES / WORD_BYTES;
     let mut mix = [0u8; 64];
@@ -117,7 +127,7 @@ fn calc_dataset_item(cache: &[u8], i: usize) -> [u8; 64] {
     }
     let mut z = [0u8; 64];
     fill_sha512(&mix, &mut z, 0);
-    z
+    H512::from(z)
 }
 
 /// Make an Ethash dataset using the given hash.
@@ -133,21 +143,12 @@ pub fn make_dataset(dataset: &mut [u8], cache: &[u8]) {
 
 /// "Main" function of Ethash, calculating the mix digest and result given the
 /// header and nonce.
-pub fn hashimoto<F: Fn(usize) -> [u8; 64]>(
-    header: &[u8], nonce: u64, full_size: usize, lookup: F
-) -> ([u8; MIX_BYTES], [u8; 32]) {
+pub fn hashimoto<F: Fn(usize) -> H512>(
+    header: &[u8], nonce: H64, full_size: usize, lookup: F
+) -> (H1024, H256) {
     let n = full_size / HASH_BYTES;
     let w = MIX_BYTES / WORD_BYTES;
     const MIXHASHES: usize = MIX_BYTES / HASH_BYTES;
-    let nonce = {
-        let mut a = nonce;
-        let mut r = [0u8; 8];
-        for i in 0..8 {
-            r[i] = (a & (u8::max_value() as u64)) as u8;
-            a = a >> 8;
-        }
-        r
-    };
     let s = {
         let mut hasher = Keccak512::default();
         hasher.input(header);
@@ -194,67 +195,69 @@ pub fn hashimoto<F: Fn(usize) -> [u8; 64]>(
         }
         z
     };
-    (cmix, result)
+    (H1024::from(cmix), H256::from(result))
 }
 
 /// Ethash used by a light client. Only stores the 16MB cache rather than the
 /// full dataset.
-pub fn hashimoto_light(
-    header: &[u8], nonce: u64, full_size: usize, cache: &[u8]
-) -> ([u8; MIX_BYTES], [u8; 32]) {
-    hashimoto(header, nonce, full_size, |i| {
+pub fn hashimoto_light<T: Encodable>(
+    header: &T, nonce: H64, full_size: usize, cache: &[u8]
+) -> (H1024, H256) {
+    let header = rlp::encode(header).to_vec();
+
+    hashimoto(&header, nonce, full_size, |i| {
         calc_dataset_item(cache, i)
     })
 }
 
 /// Ethash used by a full client. Stores the whole dataset in memory.
-pub fn hashimoto_full(
-    header: &[u8], nonce: u64, full_size: usize, dataset: &[u8]
-) -> ([u8; MIX_BYTES], [u8; 32]) {
-    hashimoto(header, nonce, full_size, |i| {
+pub fn hashimoto_full<T: Encodable>(
+    header: &T, nonce: H64, full_size: usize, dataset: &[u8]
+) -> (H1024, H256) {
+    let header = rlp::encode(header).to_vec();
+
+    hashimoto(&header, nonce, full_size, |i| {
         let mut r = [0u8; 64];
         for j in 0..64 {
             r[j] = dataset[i * 64 + j];
         }
-        r
+        H512::from(r)
     })
-}
-
-fn is_target(result: &[u8; 32], target: &[u8; 32]) -> bool {
-    for i in 0..32 {
-        if result[i] > target[i] {
-            return true;
-        }
-        if result[i] == target[i] {
-            continue;
-        }
-        if result[i] < target[i] {
-            return false;
-        }
-    }
-    return false;
 }
 
 /// Mine a nonce given the header, dataset, and the target. Target is derived
 /// from the difficulty.
-pub fn mine_target(
-    header: &[u8], nonce_start: u64, full_size: usize, dataset: &[u8], target: &[u8; 32]
-) -> u64 {
+pub fn mine<T: Encodable>(
+    header: &T, full_size: usize, dataset: &[u8], nonce_start: H64, difficulty: U256
+) -> (H64, H256) {
+    let target = U256::max_value() / difficulty;
+    let header = rlp::encode(header).to_vec();
+
     let mut nonce_current = nonce_start;
     loop {
-        let (_, result) = hashimoto_full(header, nonce_current, full_size, dataset);
-        if is_target(&result, target) {
-            return nonce_current;
+        let (_, result) = hashimoto(&header, nonce_current, full_size, |i| {
+            let mut r = [0u8; 64];
+            for j in 0..64 {
+                r[j] = dataset[i * 64 + j];
+            }
+            H512::from(r)
+        });
+        let result_cmp: U256 = result.into();
+        if result_cmp <= target {
+            return (nonce_current, result);
         }
-        nonce_current += 1;
+        let nonce_u64: u64 = nonce_current.into();
+        nonce_current = H64::from(nonce_u64 + 1);
     }
 }
 
 /// Get the seedhash for a given block number.
-pub fn get_seedhash(block_number: usize) -> [u8; 32] {
+pub fn get_seedhash(block_number: U256) -> H256 {
+    let block_number = block_number.as_usize();
+
     let mut s = [0u8; 32];
     for i in 0..(block_number / EPOCH_LENGTH) {
         fill_sha256(&s.clone(), &mut s, 0);
     }
-    s
+    H256::from(s.as_ref())
 }
