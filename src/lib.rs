@@ -12,6 +12,7 @@ mod miller_rabin;
 use miller_rabin::is_prime;
 use sha3::{Digest, Keccak256, Keccak512};
 use bigint::{H1024, U256, H256, H64, H512};
+use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use rlp::Encodable;
 use std::ops::BitXor;
 
@@ -118,13 +119,27 @@ fn fnv64(a: [u8; 64], b: [u8; 64]) -> [u8; 64] {
     r
 }
 
+fn fnv128(a: [u8; 128], b: [u8; 128]) -> [u8; 128] {
+    let mut r = [0u8; 128];
+    for i in 0..(128 / 4) {
+        let j = i * 4;
+        let a32 = (&a[j..]).read_u32::<LittleEndian>().unwrap();
+        let b32 = (&b[j..]).read_u32::<LittleEndian>().unwrap();
+
+        (&mut r[j..]).write_u32::<LittleEndian>(
+            fnv((&a[j..]).read_u32::<LittleEndian>().unwrap(),
+                (&b[j..]).read_u32::<LittleEndian>().unwrap()));
+    }
+    r
+}
+
 fn u8s_to_u32(a: &[u8]) -> u32 {
     let n = a.len();
     (a[0] as u32) + (a[1] as u32) << 8 +
         (a[2] as u32) << 16 + (a[3] as u32) << 24
 }
 
-fn calc_dataset_item(cache: &[u8], i: usize) -> H512 {
+pub fn calc_dataset_item(cache: &[u8], i: usize) -> H512 {
     debug_assert!(cache.len() % 64 == 0);
 
     let n = cache.len() / 64;
@@ -171,45 +186,48 @@ pub fn make_dataset(dataset: &mut [u8], cache: &[u8]) {
 /// "Main" function of Ethash, calculating the mix digest and result given the
 /// header and nonce.
 pub fn hashimoto<F: Fn(usize) -> H512>(
-    header: &[u8], nonce: H64, full_size: usize, lookup: F
-) -> (H1024, H256) {
+    header_hash: H256, nonce: H64, full_size: usize, lookup: F
+) -> (H256, H256) {
     let n = full_size / HASH_BYTES;
     let w = MIX_BYTES / WORD_BYTES;
     const MIXHASHES: usize = MIX_BYTES / HASH_BYTES;
     let s = {
         let mut hasher = Keccak512::default();
-        hasher.input(header);
-        hasher.input(&nonce);
+        let mut reversed_nonce: Vec<u8> = nonce.as_ref().into();
+        reversed_nonce.reverse();
+        hasher.input(&header_hash);
+        hasher.input(&reversed_nonce);
         hasher.result()
     };
     let mut mix = [0u8; MIX_BYTES];
     for i in 0..MIXHASHES {
         for j in 0..64 {
-            mix[i * MIXHASHES] = s[j];
+            mix[i * HASH_BYTES + j] = s[j];
         }
     }
+
     for i in 0..ACCESSES {
-        let p = (fnv(i.bitxor(s[0] as usize) as u32,
-                     mix[i % w] as u32) as usize) % (n / MIXHASHES) * MIXHASHES;
-        let newdata = [0u8; MIX_BYTES];
+        let p = (fnv((i as u32).bitxor(s.as_ref().read_u32::<LittleEndian>().unwrap()),
+                     (&mix[(i % w * 4)..]).read_u32::<LittleEndian>().unwrap())
+                 as usize) % (n / MIXHASHES) * MIXHASHES;
+        let mut newdata = [0u8; MIX_BYTES];
         for j in 0..MIXHASHES {
             let v = lookup(p + j);
-            let mut newdata = [0u8; MIXHASHES];
             for k in 0..64 {
                 newdata[j * 64 + k] = v[k];
             }
         }
-        for j in 0..mix.len() {
-            mix[j] = fnv(
-                mix[j] as u32,
-                u8s_to_u32(&newdata[j * 32 .. (j + 1) * 32])
-            ) as u8;
-        }
+        mix = fnv128(mix, newdata);
     }
-    let mut cmix = [0u8; MIX_BYTES];
-    for i in 0..(MIX_BYTES / 4) {
-        cmix[i] = fnv(fnv(fnv(mix[i] as u32, mix[i + 1] as u32),
-                          mix[i + 2] as u32), mix[i + 3] as u32) as u8;
+    let mut cmix = [0u8; MIX_BYTES / 4];
+    for i in 0..(MIX_BYTES / 4 / 4) {
+        let j = i * 4;
+        let a = fnv((&mix[(j * 4)..]).read_u32::<LittleEndian>().unwrap(),
+                    (&mix[((j + 1) * 4)..]).read_u32::<LittleEndian>().unwrap());
+        let b = fnv(a, (&mix[((j + 2) * 4)..]).read_u32::<LittleEndian>().unwrap());
+        let c = fnv(b, (&mix[((j + 3) * 4)..]).read_u32::<LittleEndian>().unwrap());
+
+        (&mut cmix[j..]).write_u32::<LittleEndian>(c);
     }
     let result = {
         let mut hasher = Keccak256::default();
@@ -222,17 +240,17 @@ pub fn hashimoto<F: Fn(usize) -> H512>(
         }
         z
     };
-    (H1024::from(cmix), H256::from(result))
+    (H256::from(cmix), H256::from(result))
 }
 
 /// Ethash used by a light client. Only stores the 16MB cache rather than the
 /// full dataset.
 pub fn hashimoto_light<T: Encodable>(
     header: &T, nonce: H64, full_size: usize, cache: &[u8]
-) -> (H1024, H256) {
+) -> (H256, H256) {
     let header = rlp::encode(header).to_vec();
 
-    hashimoto(&header, nonce, full_size, |i| {
+    hashimoto(H256::from(Keccak256::digest(&header).as_slice()), nonce, full_size, |i| {
         calc_dataset_item(cache, i)
     })
 }
@@ -240,10 +258,10 @@ pub fn hashimoto_light<T: Encodable>(
 /// Ethash used by a full client. Stores the whole dataset in memory.
 pub fn hashimoto_full<T: Encodable>(
     header: &T, nonce: H64, full_size: usize, dataset: &[u8]
-) -> (H1024, H256) {
+) -> (H256, H256) {
     let header = rlp::encode(header).to_vec();
 
-    hashimoto(&header, nonce, full_size, |i| {
+    hashimoto(H256::from(Keccak256::digest(&header).as_slice()), nonce, full_size, |i| {
         let mut r = [0u8; 64];
         for j in 0..64 {
             r[j] = dataset[i * 64 + j];
@@ -262,7 +280,7 @@ pub fn mine<T: Encodable>(
 
     let mut nonce_current = nonce_start;
     loop {
-        let (_, result) = hashimoto(&header, nonce_current, full_size, |i| {
+        let (_, result) = hashimoto(H256::from(Keccak256::digest(&header).as_slice()), nonce_current, full_size, |i| {
             let mut r = [0u8; 64];
             for j in 0..64 {
                 r[j] = dataset[i * 64 + j];
