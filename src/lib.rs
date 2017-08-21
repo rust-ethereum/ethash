@@ -111,9 +111,6 @@ fn fnv64(a: [u8; 64], b: [u8; 64]) -> [u8; 64] {
         let a32 = (&a[j..]).read_u32::<LittleEndian>().unwrap();
         let b32 = (&b[j..]).read_u32::<LittleEndian>().unwrap();
 
-        println!("a32: {}, b32: {}", a32, b32);
-        println!("fnv: {}", fnv(a32, b32));
-
         (&mut r[j..]).write_u32::<LittleEndian>(
             fnv((&a[j..]).read_u32::<LittleEndian>().unwrap(),
                 (&b[j..]).read_u32::<LittleEndian>().unwrap()));
