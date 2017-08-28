@@ -274,12 +274,21 @@ pub fn hashimoto_full<T: Encodable>(
     })
 }
 
+/// Convert across boundary. `f(x) = 2 ^ 256 / x`.
+pub fn cross_boundary(val: U256) -> U256 {
+    if val <= U256::one() {
+        U256::max_value()
+    } else {
+        ((U256::one() << 255) / val) << 1
+    }
+}
+
 /// Mine a nonce given the header, dataset, and the target. Target is derived
 /// from the difficulty.
 pub fn mine<T: Encodable>(
     header: &T, full_size: usize, dataset: &[u8], nonce_start: H64, difficulty: U256
 ) -> (H64, H256) {
-    let target = U256::max_value() / difficulty;
+    let target = cross_boundary(difficulty);
     let header = rlp::encode(header).to_vec();
 
     let mut nonce_current = nonce_start;
