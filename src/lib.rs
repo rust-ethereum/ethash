@@ -249,23 +249,19 @@ pub fn hashimoto<F: Fn(usize) -> H512>(
 
 /// Ethash used by a light client. Only stores the 16MB cache rather than the
 /// full dataset.
-pub fn hashimoto_light<T: Encodable>(
-    header: &T, nonce: H64, full_size: usize, cache: &[u8]
+pub fn hashimoto_light(
+    header_hash: H256, nonce: H64, full_size: usize, cache: &[u8]
 ) -> (H256, H256) {
-    let header = rlp::encode(header).to_vec();
-
-    hashimoto(H256::from(Keccak256::digest(&header).as_slice()), nonce, full_size, |i| {
+    hashimoto(header_hash, nonce, full_size, |i| {
         calc_dataset_item(cache, i)
     })
 }
 
 /// Ethash used by a full client. Stores the whole dataset in memory.
-pub fn hashimoto_full<T: Encodable>(
-    header: &T, nonce: H64, full_size: usize, dataset: &[u8]
+pub fn hashimoto_full(
+    header_hash: H256, nonce: H64, full_size: usize, dataset: &[u8]
 ) -> (H256, H256) {
-    let header = rlp::encode(header).to_vec();
-
-    hashimoto(H256::from(Keccak256::digest(&header).as_slice()), nonce, full_size, |i| {
+    hashimoto(header_hash, nonce, full_size, |i| {
         let mut r = [0u8; 64];
         for j in 0..64 {
             r[j] = dataset[i * 64 + j];

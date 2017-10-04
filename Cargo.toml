@@ -12,6 +12,6 @@ byteorder = "1.0"
 sha3 = "0.6"
 
 [dev-dependencies]
-etcommon-block = "0.2"
+etcommon-block = "0.3"
 etcommon-hexutil = "0.2"
 blockchain = "0.1"
