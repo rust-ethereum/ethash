@@ -28,14 +28,9 @@ const DATASET_PARENTS: usize = 256;
 const CACHE_ROUNDS: usize = 3;
 const ACCESSES: usize = 64;
 
-/// Epoch length where cache and dataset is unchanged.
-pub const EPOCH_LENGTH: usize = 30000;
-
 /// Get the cache size required given the block number.
-pub fn get_cache_size(block_number: U256) -> usize {
-    let block_number = block_number.as_usize();
-
-    let mut sz = CACHE_BYTES_INIT + CACHE_BYTES_GROWTH * (block_number / EPOCH_LENGTH);
+pub fn get_cache_size(epoch: usize) -> usize {
+    let mut sz = CACHE_BYTES_INIT + CACHE_BYTES_GROWTH * epoch;
     sz -= HASH_BYTES;
     while !is_prime(sz / HASH_BYTES) {
         sz -= 2 * HASH_BYTES;
@@ -44,10 +39,8 @@ pub fn get_cache_size(block_number: U256) -> usize {
 }
 
 /// Get the full dataset size given the block number.
-pub fn get_full_size(block_number: U256) -> usize {
-    let block_number = block_number.as_usize();
-
-    let mut sz = DATASET_BYTES_INIT + DATASET_BYTES_GROWTH * (block_number / EPOCH_LENGTH);
+pub fn get_full_size(epoch: usize) -> usize {
+    let mut sz = DATASET_BYTES_INIT + DATASET_BYTES_GROWTH * epoch;
     sz -= MIX_BYTES;
     while !is_prime(sz / MIX_BYTES) {
         sz -= 2 * MIX_BYTES
@@ -306,14 +299,10 @@ pub fn mine<T: Encodable>(
 }
 
 /// Get the seedhash for a given block number.
-pub fn get_seedhash(block_number: U256) -> H256 {
-    let block_number = block_number.as_usize();
-
+pub fn get_seedhash(epoch: usize) -> H256 {
     let mut s = [0u8; 32];
-    if block_number != 0 {
-        for i in 0..(block_number / EPOCH_LENGTH) {
-            fill_sha256(&s.clone(), &mut s, 0);
-        }
+    for i in 0..epoch {
+        fill_sha256(&s.clone(), &mut s, 0);
     }
     H256::from(s.as_ref())
 }
