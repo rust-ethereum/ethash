@@ -8,6 +8,9 @@ extern crate bigint;
 extern crate byteorder;
 
 mod miller_rabin;
+mod dag;
+
+pub use dag::{LightDAG, Patch, EthereumPatch};
 
 use miller_rabin::is_prime;
 use sha3::{Digest, Keccak256, Keccak512};
