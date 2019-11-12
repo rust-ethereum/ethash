@@ -4,14 +4,20 @@ description = "An Apache-licensed Ethash implementation."
 version = "0.3.0"
 authors = ["Wei Tang <hi@that.world>"]
 license = "Apache-2.0"
+edition = "2018"
 
 [dependencies]
-etcommon-bigint = "0.2"
-etcommon-rlp = "0.2"
-byteorder = "1.0"
-sha3 = "0.6"
+ethereum-types = { version = "0.8", default-features = false }
+primitive-types = { version = "0.6", default-features = false, features = ["rlp"] }
+rlp = { version = "0.4", default-features = false }
+byteorder = { version = "1", default-features = false }
+sha3 = { version = "0.8", default-features = false }
 
-[dev-dependencies]
-etcommon-block = "0.3"
-etcommon-hexutil = "0.2"
-blockchain = "0.1"
+[features]
+default = ["std"]
+std = [
+  "ethereum-types/std",
+  "rlp/std",
+  "byteorder/std",
+  "sha3/std",
+]

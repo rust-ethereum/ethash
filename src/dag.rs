@@ -1,5 +1,6 @@
-use bigint::{H256, H64, U256};
-use std::marker::PhantomData;
+use ethereum_types::{H256, H64, U256};
+use core::marker::PhantomData;
+use alloc::vec::Vec;
 
 pub trait Patch {
     fn epoch_length() -> U256;
@@ -13,6 +14,7 @@ impl Patch for EthereumPatch {
 pub struct LightDAG<P: Patch> {
     epoch: usize,
     cache: Vec<u8>,
+    #[allow(dead_code)]
     cache_size: usize,
     full_size: usize,
     _marker: PhantomData<P>
@@ -21,13 +23,13 @@ pub struct LightDAG<P: Patch> {
 impl<P: Patch> LightDAG<P> {
     pub fn new(number: U256) -> Self {
         let epoch = (number / P::epoch_length()).as_usize();
-        let cache_size = ::get_cache_size(epoch);
-        let full_size = ::get_full_size(epoch);
-        let seed = ::get_seedhash(epoch);
+        let cache_size = crate::get_cache_size(epoch);
+        let full_size = crate::get_full_size(epoch);
+        let seed = crate::get_seedhash(epoch);
 
         let mut cache: Vec<u8> = Vec::with_capacity(cache_size);
         cache.resize(cache_size, 0);
-        ::make_cache(&mut cache, seed);
+        crate::make_cache(&mut cache, seed);
 
         Self {
             cache, cache_size, full_size, epoch,
@@ -36,7 +38,7 @@ impl<P: Patch> LightDAG<P> {
     }
 
     pub fn hashimoto(&self, hash: H256, nonce: H64) -> (H256, H256) {
-        ::hashimoto_light(hash, nonce, self.full_size, &self.cache)
+        crate::hashimoto_light(hash, nonce, self.full_size, &self.cache)
     }
 
     pub fn is_valid_for(&self, number: U256) -> bool {

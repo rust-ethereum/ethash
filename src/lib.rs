@@ -1,11 +1,10 @@
 //! Apache-2 licensed Ethash implementation.
 
-// The reference algorithm used is from https://github.com/ethereum/wiki/wiki/Ethash
+#![cfg_attr(not(feature = "std"), no_std)]
 
-extern crate sha3;
-extern crate rlp;
-extern crate bigint;
-extern crate byteorder;
+extern crate alloc;
+
+// The reference algorithm used is from https://github.com/ethereum/wiki/wiki/Ethash
 
 mod miller_rabin;
 mod dag;
@@ -14,22 +13,23 @@ pub use dag::{LightDAG, Patch, EthereumPatch};
 
 use miller_rabin::is_prime;
 use sha3::{Digest, Keccak256, Keccak512};
-use bigint::{H1024, U256, H256, H64, H512};
-use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+use ethereum_types::{U256, H256, H64, H512, U64, BigEndianHash};
+use byteorder::{LittleEndian, ByteOrder};
 use rlp::Encodable;
-use std::ops::BitXor;
+use core::ops::BitXor;
+use alloc::vec::Vec;
 
-const DATASET_BYTES_INIT: usize = 1073741824; // 2 to the power of 30.
-const DATASET_BYTES_GROWTH: usize = 8388608; // 2 to the power of 23.
-const CACHE_BYTES_INIT: usize = 16777216; // 2 to the power of 24.
-const CACHE_BYTES_GROWTH: usize = 131072; // 2 to the power of 17.
-const CACHE_MULTIPLIER: usize = 1024;
-const MIX_BYTES: usize = 128;
-const WORD_BYTES: usize = 4;
-const HASH_BYTES: usize = 64;
-const DATASET_PARENTS: usize = 256;
-const CACHE_ROUNDS: usize = 3;
-const ACCESSES: usize = 64;
+pub const DATASET_BYTES_INIT: usize = 1073741824; // 2 to the power of 30.
+pub const DATASET_BYTES_GROWTH: usize = 8388608; // 2 to the power of 23.
+pub const CACHE_BYTES_INIT: usize = 16777216; // 2 to the power of 24.
+pub const CACHE_BYTES_GROWTH: usize = 131072; // 2 to the power of 17.
+pub const CACHE_MULTIPLIER: usize = 1024;
+pub const MIX_BYTES: usize = 128;
+pub const WORD_BYTES: usize = 4;
+pub const HASH_BYTES: usize = 64;
+pub const DATASET_PARENTS: usize = 256;
+pub const CACHE_ROUNDS: usize = 3;
+pub const ACCESSES: usize = 64;
 
 /// Get the cache size required given the block number.
 pub fn get_cache_size(epoch: usize) -> usize {
@@ -74,7 +74,7 @@ pub fn make_cache(cache: &mut [u8], seed: H256) {
     assert!(cache.len() % HASH_BYTES == 0);
     let n = cache.len() / HASH_BYTES;
 
-    fill_sha512(&seed, cache, 0);
+    fill_sha512(&seed[..], cache, 0);
 
     for i in 1..n {
         let (last, next) = cache.split_at_mut(i * 64);
@@ -83,7 +83,7 @@ pub fn make_cache(cache: &mut [u8], seed: H256) {
 
     for _ in 0..CACHE_ROUNDS {
         for i in 0..n {
-            let v = ((&cache[(i * 64)..]).read_u32::<LittleEndian>().unwrap() as usize) % n;
+            let v = (LittleEndian::read_u32(&cache[(i * 64)..]) as usize) % n;
 
             let mut r = [0u8; 64];
             for j in 0..64 {
@@ -96,7 +96,7 @@ pub fn make_cache(cache: &mut [u8], seed: H256) {
     }
 }
 
-const FNV_PRIME: u32 = 0x01000193;
+pub const FNV_PRIME: u32 = 0x01000193;
 fn fnv(v1: u32, v2: u32) -> u32 {
     let v1 = v1 as u64;
     let v2 = v2 as u64;
@@ -108,12 +108,12 @@ fn fnv64(a: [u8; 64], b: [u8; 64]) -> [u8; 64] {
     let mut r = [0u8; 64];
     for i in 0..(64 / 4) {
         let j = i * 4;
-        let a32 = (&a[j..]).read_u32::<LittleEndian>().unwrap();
-        let b32 = (&b[j..]).read_u32::<LittleEndian>().unwrap();
 
-        (&mut r[j..]).write_u32::<LittleEndian>(
-            fnv((&a[j..]).read_u32::<LittleEndian>().unwrap(),
-                (&b[j..]).read_u32::<LittleEndian>().unwrap()));
+        LittleEndian::write_u32(
+            &mut r[j..],
+            fnv(LittleEndian::read_u32(&a[j..]),
+                LittleEndian::read_u32(&b[j..]))
+        );
     }
     r
 }
@@ -122,20 +122,14 @@ fn fnv128(a: [u8; 128], b: [u8; 128]) -> [u8; 128] {
     let mut r = [0u8; 128];
     for i in 0..(128 / 4) {
         let j = i * 4;
-        let a32 = (&a[j..]).read_u32::<LittleEndian>().unwrap();
-        let b32 = (&b[j..]).read_u32::<LittleEndian>().unwrap();
 
-        (&mut r[j..]).write_u32::<LittleEndian>(
-            fnv((&a[j..]).read_u32::<LittleEndian>().unwrap(),
-                (&b[j..]).read_u32::<LittleEndian>().unwrap()));
+        LittleEndian::write_u32(
+            &mut r[j..],
+            fnv(LittleEndian::read_u32(&a[j..]),
+                LittleEndian::read_u32(&b[j..]))
+        );
     }
     r
-}
-
-fn u8s_to_u32(a: &[u8]) -> u32 {
-    let n = a.len();
-    (a[0] as u32) + (a[1] as u32) << 8 +
-        (a[2] as u32) << 16 + (a[3] as u32) << 24
 }
 
 /// Calculate the dataset item.
@@ -148,8 +142,8 @@ pub fn calc_dataset_item(cache: &[u8], i: usize) -> H512 {
     for j in 0..64 {
         mix[j] = cache[(i % n) * 64 + j];
     }
-    let mix_first32 = mix.as_ref().read_u32::<LittleEndian>().unwrap().bitxor(i as u32);
-    mix.as_mut().write_u32::<LittleEndian>(mix_first32);
+    let mix_first32 = LittleEndian::read_u32(mix.as_ref()).bitxor(i as u32);
+    LittleEndian::write_u32(mix.as_mut(), mix_first32);
     {
         let mut remix = [0u8; 64];
         for j in 0..64 {
@@ -159,7 +153,7 @@ pub fn calc_dataset_item(cache: &[u8], i: usize) -> H512 {
     }
     for j in 0..DATASET_PARENTS {
         let cache_index = fnv((i.bitxor(j) & (u32::max_value() as usize)) as u32,
-                              (&mix[(j % r * 4)..]).read_u32::<LittleEndian>().unwrap()) as usize;
+                              LittleEndian::read_u32(&mix[(j % r * 4)..])) as usize;
         let mut item = [0u8; 64];
         let cache_index = cache_index % n;
         for i in 0..64 {
@@ -207,8 +201,8 @@ pub fn hashimoto<F: Fn(usize) -> H512>(
     }
 
     for i in 0..ACCESSES {
-        let p = (fnv((i as u32).bitxor(s.as_ref().read_u32::<LittleEndian>().unwrap()),
-                     (&mix[(i % w * 4)..]).read_u32::<LittleEndian>().unwrap())
+        let p = (fnv((i as u32).bitxor(LittleEndian::read_u32(s.as_ref())),
+                     LittleEndian::read_u32(&mix[(i % w * 4)..]))
                  as usize) % (n / MIXHASHES) * MIXHASHES;
         let mut newdata = [0u8; MIX_BYTES];
         for j in 0..MIXHASHES {
@@ -222,12 +216,12 @@ pub fn hashimoto<F: Fn(usize) -> H512>(
     let mut cmix = [0u8; MIX_BYTES / 4];
     for i in 0..(MIX_BYTES / 4 / 4) {
         let j = i * 4;
-        let a = fnv((&mix[(j * 4)..]).read_u32::<LittleEndian>().unwrap(),
-                    (&mix[((j + 1) * 4)..]).read_u32::<LittleEndian>().unwrap());
-        let b = fnv(a, (&mix[((j + 2) * 4)..]).read_u32::<LittleEndian>().unwrap());
-        let c = fnv(b, (&mix[((j + 3) * 4)..]).read_u32::<LittleEndian>().unwrap());
+        let a = fnv(LittleEndian::read_u32(&mix[(j * 4)..]),
+                    LittleEndian::read_u32(&mix[((j + 1) * 4)..]));
+        let b = fnv(a, LittleEndian::read_u32(&mix[((j + 2) * 4)..]));
+        let c = fnv(b, LittleEndian::read_u32(&mix[((j + 3) * 4)..]));
 
-        (&mut cmix[j..]).write_u32::<LittleEndian>(c);
+        LittleEndian::write_u32(&mut cmix[j..], c);
     }
     let result = {
         let mut hasher = Keccak256::default();
@@ -285,27 +279,32 @@ pub fn mine<T: Encodable>(
 
     let mut nonce_current = nonce_start;
     loop {
-        let (_, result) = hashimoto(H256::from(Keccak256::digest(&header).as_slice()), nonce_current, full_size, |i| {
-            let mut r = [0u8; 64];
-            for j in 0..64 {
-                r[j] = dataset[i * 64 + j];
+        let (_, result) = hashimoto(
+            H256::from_slice(Keccak256::digest(&header).as_slice()),
+            nonce_current,
+            full_size,
+            |i| {
+                let mut r = [0u8; 64];
+                for j in 0..64 {
+                    r[j] = dataset[i * 64 + j];
+                }
+                H512::from(r)
             }
-            H512::from(r)
-        });
-        let result_cmp: U256 = result.into();
+        );
+        let result_cmp: U256 = result.into_uint();
         if result_cmp <= target {
             return (nonce_current, result);
         }
-        let nonce_u64: u64 = nonce_current.into();
-        nonce_current = H64::from(nonce_u64 + 1);
+        let nonce_u64 = nonce_current.into_uint().as_u64();
+        nonce_current = H64::from_uint(&U64::from(nonce_u64 + 1));
     }
 }
 
 /// Get the seedhash for a given block number.
 pub fn get_seedhash(epoch: usize) -> H256 {
     let mut s = [0u8; 32];
-    for i in 0..epoch {
+    for _ in 0..epoch {
         fill_sha256(&s.clone(), &mut s, 0);
     }
-    H256::from(s.as_ref())
+    H256::from_slice(s.as_ref())
 }
