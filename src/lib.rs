@@ -312,10 +312,8 @@ pub fn get_seedhash(epoch: usize) -> H256 {
 
 #[cfg(test)]
 mod tests {
-    use crate::{hashimoto_light, get_cache_size, LightDAG, Patch, EthereumPatch};
+    use crate::{LightDAG, EthereumPatch};
     use hex_literal::*;
-    use rustc_hex::FromHex;
-    use std::str::FromStr;
     use ethereum_types::{H256, H64};
 
     #[test]
