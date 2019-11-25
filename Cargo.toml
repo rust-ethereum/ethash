@@ -14,7 +14,6 @@ byteorder = { version = "1", default-features = false }
 sha3 = { version = "0.8", default-features = false }
 
 [dev-dependencies]
-rustc-hex = "2.0"
 hex-literal = "0.2.1"
 
 [features]
