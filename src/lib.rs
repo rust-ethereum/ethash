@@ -309,7 +309,6 @@ pub fn get_seedhash(epoch: usize) -> H256 {
     H256::from_slice(s.as_ref())
 }
 
-
 #[cfg(test)]
 mod tests {
     use crate::{LightDAG, EthereumPatch};
@@ -318,13 +317,11 @@ mod tests {
 
     #[test]
     fn hashimoto_should_work() {
-
         type DAG = LightDAG<EthereumPatch>;
         let light_dag = DAG::new(0x8947a9.into());
         // bare_hash of block#8996777 on ethereum mainnet
         let partial_header_hash = H256::from(hex!("3c2e6623b1de8862a927eeeef2b6b25dea6e1d9dad88dca3c239be3959dc384a"));
-        let mixh = light_dag.hashimoto(partial_header_hash,
-                            H64::from(hex!("a5d3d0ccc8bb8a29"))).0;
+        let mixh = light_dag.hashimoto(partial_header_hash, H64::from(hex!("a5d3d0ccc8bb8a29"))).0;
         assert_eq!(mixh, H256::from(hex!("543bc0769f7d5df30e7633f4a01552c2cee7baace8a6da37fddaa19e49e81209")));
     }
 }
