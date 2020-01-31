@@ -182,16 +182,40 @@ pub fn make_dataset(dataset: &mut [u8], cache: &[u8]) {
 pub fn hashimoto<F: Fn(usize) -> H512>(
     header_hash: H256, nonce: H64, full_size: usize, lookup: F
 ) -> (H256, H256) {
+    hashimoto_with_hasher(
+        header_hash,
+        nonce,
+        full_size,
+        lookup,
+        |data| {
+            let mut hasher = Keccak256::default();
+            hasher.input(&data);
+            let mut res = [0u8; 32];
+            res.copy_from_slice(hasher.result().as_slice());
+            res
+        },
+        |data| {
+            let mut hasher = Keccak512::default();
+            hasher.input(&data);
+            let mut res = [0u8; 64];
+            res.copy_from_slice(hasher.result().as_slice());
+            res
+        }
+    )
+}
+
+pub fn hashimoto_with_hasher<F: Fn(usize) -> H512, HF256: Fn(&[u8]) -> [u8; 32], HF512: Fn(&[u8]) -> [u8; 64]>(
+    header_hash: H256, nonce: H64, full_size: usize, lookup: F, hasher256: HF256, hasher512: HF512
+) -> (H256, H256) {
     let n = full_size / HASH_BYTES;
     let w = MIX_BYTES / WORD_BYTES;
     const MIXHASHES: usize = MIX_BYTES / HASH_BYTES;
     let s = {
-        let mut hasher = Keccak512::default();
-        let mut reversed_nonce: Vec<u8> = nonce.as_ref().into();
-        reversed_nonce.reverse();
-        hasher.input(&header_hash);
-        hasher.input(&reversed_nonce);
-        hasher.result()
+        let mut data = [0u8; 40];
+        data[..32].copy_from_slice(&header_hash.0);
+        data[32..].copy_from_slice(&nonce.0);
+        data[32..].reverse();
+        hasher512(&data)
     };
     let mut mix = [0u8; MIX_BYTES];
     for i in 0..MIXHASHES {
@@ -224,15 +248,10 @@ pub fn hashimoto<F: Fn(usize) -> H512>(
         LittleEndian::write_u32(&mut cmix[j..], c);
     }
     let result = {
-        let mut hasher = Keccak256::default();
-        hasher.input(&s);
-        hasher.input(&cmix);
-        let r = hasher.result();
-        let mut z = [0u8; 32];
-        for i in 0..32 {
-            z[i] = r[i];
-        }
-        z
+        let mut data = [0u8; 64 + MIX_BYTES / 4];
+        data[..64].copy_from_slice(&s);
+        data[64..].copy_from_slice(&cmix);
+        hasher256(&data)
     };
     (H256::from(cmix), H256::from(result))
 }
