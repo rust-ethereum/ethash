@@ -2,18 +2,18 @@
 
 #[derive(Copy, Clone, PartialEq, PartialOrd, Ord, Eq, Debug)]
 struct U128 {
-    hi: usize,
-    lo: usize,
+    hi: u64,
+    lo: u64,
 }
 
-fn modulo(mut a: U128, m: usize) -> usize {
+fn modulo(mut a: U128, m: u64) -> u64 {
     if a.hi >= m {
         a.hi -= (a.hi / m) * m;
     }
     let mut x = a.hi;
     let mut y = a.lo;
     for _ in 0..64 {
-        let t = (x as isize >> 63) as usize;
+        let t = (x as i64 >> 63) as u64;
         x = (x << 1) | (y >> 63);
         y <<= 1;
         if (x | t) >= m {
@@ -23,7 +23,7 @@ fn modulo(mut a: U128, m: usize) -> usize {
     }
     x
 }
-fn mul128(u: usize, v: usize) -> U128 {
+fn mul128(u: u64, v: u64) -> U128 {
     let u1 = u >> 32;
     let u0 = u & (!0 >> 32);
     let v1 = v >> 32;
@@ -44,18 +44,18 @@ fn mul128(u: usize, v: usize) -> U128 {
         hi: u1*v1 + w2 + k
     }
 }
-fn mod_mul_(a: usize, b: usize, m: usize) -> usize {
+fn mod_mul_(a: u64, b: u64, m: u64) -> u64 {
     modulo(mul128(a, b), m)
 }
 
-fn mod_mul(a: usize, b: usize, m: usize) -> usize {
+fn mod_mul(a: u64, b: u64, m: u64) -> u64 {
     match a.checked_mul(b) {
         Some(r) => if r >= m { r % m } else { r },
         None => mod_mul_(a, b, m),
     }
 }
 
-fn mod_sqr(a: usize, m: usize) -> usize {
+fn mod_sqr(a: u64, m: u64) -> u64 {
     if a < (1 << 32) {
         let r = a * a;
         if r >= m {
@@ -68,8 +68,8 @@ fn mod_sqr(a: usize, m: usize) -> usize {
     }
 }
 
-fn mod_exp(mut x: usize, mut d: usize, n: usize) -> usize {
-    let mut ret: usize = 1;
+fn mod_exp(mut x: u64, mut d: u64, n: u64) -> u64 {
+    let mut ret: u64 = 1;
     while d != 0 {
         if d % 2 == 1 {
             ret = mod_mul(ret, x, n)
@@ -81,13 +81,13 @@ fn mod_exp(mut x: usize, mut d: usize, n: usize) -> usize {
 }
 
 pub fn is_prime(n: usize) -> bool {
-    const HINT: &'static [usize] = &[2];
+    const HINT: &'static [u64] = &[2];
 
     // we have a strict upper bound, so we can just use the witness
     // table of Pomerance, Selfridge & Wagstaff and Jeaschke to be as
     // efficient as possible, without having to fall back to
     // randomness.
-    const WITNESSES: &'static [(usize, &'static [usize])] =
+    const WITNESSES: &'static [(u64, &'static [u64])] =
         &[(2_046, HINT),
             (1_373_652, &[2, 3]),
             (9_080_190, &[31, 73]),
@@ -108,18 +108,18 @@ pub fn is_prime(n: usize) -> bool {
     while d % 2 == 0 { d /= 2; s += 1 }
 
     let witnesses =
-        WITNESSES.iter().find(|&&(hi, _)| hi >= n)
+        WITNESSES.iter().find(|&&(hi, _)| hi >= n as u64)
             .map(|&(_, wtnss)| wtnss).unwrap();
     'next_witness: for &a in witnesses.iter() {
-        let mut power = mod_exp(a, d, n);
-        assert!(power < n);
-        if power == 1 || power == n - 1 { continue 'next_witness }
+        let mut power = mod_exp(a, d as u64, n as u64);
+        assert!(power < n as u64);
+        if power == 1 || power == n as u64 - 1 { continue 'next_witness }
 
         for _r in 0..s {
-            power = mod_sqr(power, n);
-            assert!(power < n);
+            power = mod_sqr(power, n as u64);
+            assert!(power < n as u64);
             if power == 1 { return false }
-            if power == n - 1 {
+            if power == n as u64 - 1 {
                 continue 'next_witness
             }
         }
