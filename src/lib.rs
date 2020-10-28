@@ -179,7 +179,7 @@ pub fn make_dataset(dataset: &mut [u8], cache: &[u8]) {
 
 /// "Main" function of Ethash, calculating the mix digest and result given the
 /// header and nonce.
-pub fn hashimoto<F: Fn(usize) -> H512>(
+pub fn hashimoto<F: FnMut(usize) -> H512>(
     header_hash: H256, nonce: H64, full_size: usize, lookup: F
 ) -> (H256, H256) {
     hashimoto_with_hasher(
@@ -204,8 +204,8 @@ pub fn hashimoto<F: Fn(usize) -> H512>(
     )
 }
 
-pub fn hashimoto_with_hasher<F: Fn(usize) -> H512, HF256: Fn(&[u8]) -> [u8; 32], HF512: Fn(&[u8]) -> [u8; 64]>(
-    header_hash: H256, nonce: H64, full_size: usize, lookup: F, hasher256: HF256, hasher512: HF512
+pub fn hashimoto_with_hasher<F: FnMut(usize) -> H512, HF256: FnMut(&[u8]) -> [u8; 32], HF512: FnMut(&[u8]) -> [u8; 64]>(
+    header_hash: H256, nonce: H64, full_size: usize, mut lookup: F, mut hasher256: HF256, mut hasher512: HF512
 ) -> (H256, H256) {
     let n = full_size / HASH_BYTES;
     let w = MIX_BYTES / WORD_BYTES;
