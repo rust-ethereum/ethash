@@ -133,14 +133,14 @@ fn fnv128(a: [u8; 128], b: [u8; 128]) -> [u8; 128] {
 }
 
 /// Calculate the dataset item.
-pub fn calc_dataset_item(cache: &[u8], i: usize) -> H512 {
+pub fn calc_dataset_item(cache: &[u8], i: u32) -> H512 {
     debug_assert!(cache.len() % 64 == 0);
 
     let n = cache.len() / 64;
     let r = HASH_BYTES / WORD_BYTES;
     let mut mix = [0u8; 64];
     for j in 0..64 {
-        mix[j] = cache[(i % n) * 64 + j];
+        mix[j] = cache[(i as usize % n) * 64 + j];
     }
     let mix_first32 = LittleEndian::read_u32(mix.as_ref()).bitxor(i as u32);
     LittleEndian::write_u32(mix.as_mut(), mix_first32);
@@ -152,7 +152,7 @@ pub fn calc_dataset_item(cache: &[u8], i: usize) -> H512 {
         fill_sha512(&remix, &mut mix, 0);
     }
     for j in 0..DATASET_PARENTS {
-        let cache_index = fnv((i.bitxor(j) & (u32::max_value() as usize)) as u32,
+        let cache_index = fnv(i.bitxor(j as u32),
                               LittleEndian::read_u32(&mix[(j % r * 4)..])) as usize;
         let mut item = [0u8; 64];
         let cache_index = cache_index % n;
@@ -170,7 +170,7 @@ pub fn calc_dataset_item(cache: &[u8], i: usize) -> H512 {
 pub fn make_dataset(dataset: &mut [u8], cache: &[u8]) {
     let n = dataset.len() / HASH_BYTES;
     for i in 0..n {
-        let z = calc_dataset_item(cache, i);
+        let z = calc_dataset_item(cache, i as u32);
         for j in 0..64 {
             dataset[i * 64 + j] = z[j];
         }
@@ -179,7 +179,7 @@ pub fn make_dataset(dataset: &mut [u8], cache: &[u8]) {
 
 /// "Main" function of Ethash, calculating the mix digest and result given the
 /// header and nonce.
-pub fn hashimoto<F: FnMut(usize) -> H512>(
+pub fn hashimoto<F: FnMut(u32) -> H512>(
     header_hash: H256, nonce: H64, full_size: usize, lookup: F
 ) -> (H256, H256) {
     hashimoto_with_hasher(
@@ -204,10 +204,10 @@ pub fn hashimoto<F: FnMut(usize) -> H512>(
     )
 }
 
-pub fn hashimoto_with_hasher<F: FnMut(usize) -> H512, HF256: FnMut(&[u8]) -> [u8; 32], HF512: FnMut(&[u8]) -> [u8; 64]>(
+pub fn hashimoto_with_hasher<F: FnMut(u32) -> H512, HF256: FnMut(&[u8]) -> [u8; 32], HF512: FnMut(&[u8]) -> [u8; 64]>(
     header_hash: H256, nonce: H64, full_size: usize, mut lookup: F, mut hasher256: HF256, mut hasher512: HF512
 ) -> (H256, H256) {
-    let n = full_size / HASH_BYTES;
+    let n = (full_size / HASH_BYTES) as u32;
     let w = MIX_BYTES / WORD_BYTES;
     const MIXHASHES: usize = MIX_BYTES / HASH_BYTES;
     let s = {
@@ -225,12 +225,12 @@ pub fn hashimoto_with_hasher<F: FnMut(usize) -> H512, HF256: FnMut(&[u8]) -> [u8
     }
 
     for i in 0..ACCESSES {
-        let p = (fnv((i as u32).bitxor(LittleEndian::read_u32(s.as_ref())),
-                     LittleEndian::read_u32(&mix[(i % w * 4)..]))
-                 as usize) % (n / MIXHASHES) * MIXHASHES;
+        let p = fnv((i as u32).bitxor(LittleEndian::read_u32(s.as_ref())),
+                    LittleEndian::read_u32(&mix[(i % w * 4)..]))
+                % (n / MIXHASHES as u32) * MIXHASHES as u32;
         let mut newdata = [0u8; MIX_BYTES];
         for j in 0..MIXHASHES {
-            let v = lookup(p + j);
+            let v = lookup(p + j as u32);
             for k in 0..64 {
                 newdata[j * 64 + k] = v[k];
             }
@@ -262,7 +262,7 @@ pub fn hashimoto_light(
     header_hash: H256, nonce: H64, full_size: usize, cache: &[u8]
 ) -> (H256, H256) {
     hashimoto(header_hash, nonce, full_size, |i| {
-        calc_dataset_item(cache, i)
+        calc_dataset_item(cache, i as u32)
     })
 }
 
@@ -273,7 +273,7 @@ pub fn hashimoto_full(
     hashimoto(header_hash, nonce, full_size, |i| {
         let mut r = [0u8; 64];
         for j in 0..64 {
-            r[j] = dataset[i * 64 + j];
+            r[j] = dataset[i as usize * 64 + j];
         }
         H512::from(r)
     })
@@ -305,7 +305,7 @@ pub fn mine<T: Encodable>(
             |i| {
                 let mut r = [0u8; 64];
                 for j in 0..64 {
-                    r[j] = dataset[i * 64 + j];
+                    r[j] = dataset[i as usize * 64 + j];
                 }
                 H512::from(r)
             }
