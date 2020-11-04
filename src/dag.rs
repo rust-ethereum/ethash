@@ -13,7 +13,7 @@ impl Patch for EthereumPatch {
 
 pub struct LightDAG<P: Patch> {
     epoch: usize,
-    cache: Vec<u8>,
+    pub cache: Vec<u8>,
     #[allow(dead_code)]
     cache_size: usize,
     full_size: usize,
