@@ -44,4 +44,15 @@ impl<P: Patch> LightDAG<P> {
     pub fn is_valid_for(&self, number: U256) -> bool {
         (number / P::epoch_length()).as_usize() == self.epoch
     }
+
+    pub fn from_cache(cache: Vec<u8>, number: U256) -> Self {
+        let epoch = (number / P::epoch_length()).as_usize();
+        let cache_size = crate::get_cache_size(epoch);
+        let full_size = crate::get_full_size(epoch);
+
+        Self {
+            cache, cache_size, full_size, epoch,
+            _marker: PhantomData
+        }
+    }
 }
