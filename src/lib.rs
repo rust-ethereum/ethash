@@ -17,7 +17,6 @@ use ethereum_types::{U256, H256, H64, H512, U64, BigEndianHash};
 use byteorder::{LittleEndian, ByteOrder};
 use rlp::Encodable;
 use core::ops::BitXor;
-use alloc::vec::Vec;
 
 pub const DATASET_BYTES_INIT: usize = 1073741824; // 2 to the power of 30.
 pub const DATASET_BYTES_GROWTH: usize = 8388608; // 2 to the power of 23.
