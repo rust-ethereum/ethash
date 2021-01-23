@@ -80,7 +80,7 @@ fn mod_exp(mut x: u64, mut d: u64, n: u64) -> u64 {
     ret
 }
 
-pub fn is_prime(n: usize) -> bool {
+pub fn is_prime(n: u64) -> bool {
     const HINT: &'static [u64] = &[2];
 
     // we have a strict upper bound, so we can just use the witness
@@ -108,18 +108,18 @@ pub fn is_prime(n: usize) -> bool {
     while d % 2 == 0 { d /= 2; s += 1 }
 
     let witnesses =
-        WITNESSES.iter().find(|&&(hi, _)| hi >= n as u64)
+        WITNESSES.iter().find(|&&(hi, _)| hi >= n)
             .map(|&(_, wtnss)| wtnss).unwrap();
     'next_witness: for &a in witnesses.iter() {
-        let mut power = mod_exp(a, d as u64, n as u64);
-        assert!(power < n as u64);
-        if power == 1 || power == n as u64 - 1 { continue 'next_witness }
+        let mut power = mod_exp(a, d, n);
+        assert!(power < n);
+        if power == 1 || power == n - 1 { continue 'next_witness }
 
         for _r in 0..s {
-            power = mod_sqr(power, n as u64);
-            assert!(power < n as u64);
+            power = mod_sqr(power, n);
+            assert!(power < n);
             if power == 1 { return false }
-            if power == n as u64 - 1 {
+            if power == n - 1 {
                 continue 'next_witness
             }
         }
