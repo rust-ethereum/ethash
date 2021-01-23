@@ -17,12 +17,11 @@ use ethereum_types::{U256, H256, H64, H512, U64, BigEndianHash};
 use byteorder::{LittleEndian, ByteOrder};
 use rlp::Encodable;
 use core::ops::BitXor;
-use alloc::vec::Vec;
 
-pub const DATASET_BYTES_INIT: usize = 1073741824; // 2 to the power of 30.
-pub const DATASET_BYTES_GROWTH: usize = 8388608; // 2 to the power of 23.
-pub const CACHE_BYTES_INIT: usize = 16777216; // 2 to the power of 24.
-pub const CACHE_BYTES_GROWTH: usize = 131072; // 2 to the power of 17.
+pub const DATASET_BYTES_INIT: u64 = 1073741824; // 2 to the power of 30.
+pub const DATASET_BYTES_GROWTH: u64 = 8388608; // 2 to the power of 23.
+pub const CACHE_BYTES_INIT: u64 = 16777216; // 2 to the power of 24.
+pub const CACHE_BYTES_GROWTH: u64 = 131072; // 2 to the power of 17.
 pub const CACHE_MULTIPLIER: usize = 1024;
 pub const MIX_BYTES: usize = 128;
 pub const WORD_BYTES: usize = 4;
@@ -33,20 +32,22 @@ pub const ACCESSES: usize = 64;
 
 /// Get the cache size required given the block number.
 pub fn get_cache_size(epoch: usize) -> usize {
-    let mut sz = CACHE_BYTES_INIT + CACHE_BYTES_GROWTH * epoch;
-    sz -= HASH_BYTES;
-    while !is_prime(sz / HASH_BYTES) {
-        sz -= 2 * HASH_BYTES;
+    let mut sz = CACHE_BYTES_INIT + CACHE_BYTES_GROWTH * (epoch as u64);
+    let hash_bytes_64 = HASH_BYTES as u64;
+    sz -= hash_bytes_64;
+    while !is_prime(sz / hash_bytes_64) {
+        sz -= 2 * hash_bytes_64;
     }
-    sz
+    sz as usize
 }
 
 /// Get the full dataset size given the block number.
-pub fn get_full_size(epoch: usize) -> usize {
-    let mut sz = DATASET_BYTES_INIT + DATASET_BYTES_GROWTH * epoch;
-    sz -= MIX_BYTES;
-    while !is_prime(sz / MIX_BYTES) {
-        sz -= 2 * MIX_BYTES
+pub fn get_full_size(epoch: usize) -> u64 {
+    let mut sz = DATASET_BYTES_INIT + DATASET_BYTES_GROWTH * (epoch as u64);
+    let mix_bytes_64 = MIX_BYTES as u64;
+    sz -= mix_bytes_64;
+    while !is_prime(sz / mix_bytes_64) {
+        sz -= 2 * mix_bytes_64
     }
     sz
 }
@@ -180,7 +181,7 @@ pub fn make_dataset(dataset: &mut [u8], cache: &[u8]) {
 /// "Main" function of Ethash, calculating the mix digest and result given the
 /// header and nonce.
 pub fn hashimoto<F: Fn(usize) -> H512>(
-    header_hash: H256, nonce: H64, full_size: usize, lookup: F
+    header_hash: H256, nonce: H64, full_size: u64, lookup: F
 ) -> (H256, H256) {
     hashimoto_with_hasher(
         header_hash,
@@ -205,11 +206,12 @@ pub fn hashimoto<F: Fn(usize) -> H512>(
 }
 
 pub fn hashimoto_with_hasher<F: Fn(usize) -> H512, HF256: Fn(&[u8]) -> [u8; 32], HF512: Fn(&[u8]) -> [u8; 64]>(
-    header_hash: H256, nonce: H64, full_size: usize, lookup: F, hasher256: HF256, hasher512: HF512
+    header_hash: H256, nonce: H64, full_size: u64, lookup: F, hasher256: HF256, hasher512: HF512
 ) -> (H256, H256) {
-    let n = full_size / HASH_BYTES;
+    let n = full_size / (HASH_BYTES as u64);
     let w = MIX_BYTES / WORD_BYTES;
     const MIXHASHES: usize = MIX_BYTES / HASH_BYTES;
+    const MIXHASHES_64: u64 = MIXHASHES as u64;
     let s = {
         let mut data = [0u8; 40];
         data[..32].copy_from_slice(&header_hash.0);
@@ -225,9 +227,9 @@ pub fn hashimoto_with_hasher<F: Fn(usize) -> H512, HF256: Fn(&[u8]) -> [u8; 32],
     }
 
     for i in 0..ACCESSES {
-        let p = (fnv((i as u32).bitxor(LittleEndian::read_u32(s.as_ref())),
+        let p = ((fnv((i as u32).bitxor(LittleEndian::read_u32(s.as_ref())),
                      LittleEndian::read_u32(&mix[(i % w * 4)..]))
-                 as usize) % (n / MIXHASHES) * MIXHASHES;
+                 as u64) % (n / MIXHASHES_64) * MIXHASHES_64) as usize;
         let mut newdata = [0u8; MIX_BYTES];
         for j in 0..MIXHASHES {
             let v = lookup(p + j);
@@ -259,7 +261,7 @@ pub fn hashimoto_with_hasher<F: Fn(usize) -> H512, HF256: Fn(&[u8]) -> [u8; 32],
 /// Ethash used by a light client. Only stores the 16MB cache rather than the
 /// full dataset.
 pub fn hashimoto_light(
-    header_hash: H256, nonce: H64, full_size: usize, cache: &[u8]
+    header_hash: H256, nonce: H64, full_size: u64, cache: &[u8]
 ) -> (H256, H256) {
     hashimoto(header_hash, nonce, full_size, |i| {
         calc_dataset_item(cache, i)
@@ -268,7 +270,7 @@ pub fn hashimoto_light(
 
 /// Ethash used by a full client. Stores the whole dataset in memory.
 pub fn hashimoto_full(
-    header_hash: H256, nonce: H64, full_size: usize, dataset: &[u8]
+    header_hash: H256, nonce: H64, full_size: u64, dataset: &[u8]
 ) -> (H256, H256) {
     hashimoto(header_hash, nonce, full_size, |i| {
         let mut r = [0u8; 64];
@@ -291,7 +293,7 @@ pub fn cross_boundary(val: U256) -> U256 {
 /// Mine a nonce given the header, dataset, and the target. Target is derived
 /// from the difficulty.
 pub fn mine<T: Encodable>(
-    header: &T, full_size: usize, dataset: &[u8], nonce_start: H64, difficulty: U256
+    header: &T, full_size: u64, dataset: &[u8], nonce_start: H64, difficulty: U256
 ) -> (H64, H256) {
     let target = cross_boundary(difficulty);
     let header = rlp::encode(header).to_vec();
