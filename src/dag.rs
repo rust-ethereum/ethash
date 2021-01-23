@@ -16,7 +16,7 @@ pub struct LightDAG<P: Patch> {
     cache: Vec<u8>,
     #[allow(dead_code)]
     cache_size: usize,
-    full_size: usize,
+    full_size: u64,
     _marker: PhantomData<P>
 }
 
