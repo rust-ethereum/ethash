@@ -2,22 +2,27 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
+#[cfg(not(feature = "std"))]
 extern crate alloc;
 
 // The reference algorithm used is from https://github.com/ethereum/wiki/wiki/Ethash
 
-mod miller_rabin;
 mod dag;
+mod miller_rabin;
+#[cfg(feature = "withproofs")]
+mod proof;
+#[cfg(feature = "withproofs")]
+pub use proof::*;
 
-pub use dag::{LightDAG, Patch, EthereumPatch};
+pub use dag::{EthereumPatch, LightDAG, Patch};
 
-use miller_rabin::is_prime;
-use sha3::{Digest, Keccak256, Keccak512};
-use ethereum_types::{U256, H256, H64, H512, U64, BigEndianHash};
-use byteorder::{LittleEndian, ByteOrder};
-use rlp::Encodable;
 use core::ops::BitXor;
-use alloc::vec::Vec;
+
+use byteorder::{ByteOrder, LittleEndian};
+use ethereum_types::{BigEndianHash, H256, H512, H64, U256, U64};
+use miller_rabin::is_prime;
+use rlp::Encodable;
+use sha3::{Digest, Keccak256, Keccak512};
 
 pub const DATASET_BYTES_INIT: usize = 1073741824; // 2 to the power of 30.
 pub const DATASET_BYTES_GROWTH: usize = 8388608; // 2 to the power of 23.
@@ -78,7 +83,7 @@ pub fn make_cache(cache: &mut [u8], seed: H256) {
 
     for i in 1..n {
         let (last, next) = cache.split_at_mut(i * 64);
-        fill_sha512(&last[(last.len()-64)..], next, 0);
+        fill_sha512(&last[(last.len() - 64)..], next, 0);
     }
 
     for _ in 0..CACHE_ROUNDS {
@@ -97,11 +102,17 @@ pub fn make_cache(cache: &mut [u8], seed: H256) {
 }
 
 pub const FNV_PRIME: u32 = 0x01000193;
+
 fn fnv(v1: u32, v2: u32) -> u32 {
     let v1 = v1 as u64;
     let v2 = v2 as u64;
+    (((v1 * 0x01000000) + (v1 * 0x193)) ^ v2) as _
+}
 
-    ((((v1 * 0x01000000 | 0) + (v1 * 0x193 | 0)) ^ v2) >> 0) as u32
+fn fnv_mix_hash(mix: &mut [u32; 32], data: [u32; 32]) {
+    for i in 0..32 {
+        mix[i] = (mix[i].wrapping_mul(FNV_PRIME)).bitxor(data[i]);
+    }
 }
 
 fn fnv64(a: [u8; 64], b: [u8; 64]) -> [u8; 64] {
@@ -111,8 +122,10 @@ fn fnv64(a: [u8; 64], b: [u8; 64]) -> [u8; 64] {
 
         LittleEndian::write_u32(
             &mut r[j..],
-            fnv(LittleEndian::read_u32(&a[j..]),
-                LittleEndian::read_u32(&b[j..]))
+            fnv(
+                LittleEndian::read_u32(&a[j..]),
+                LittleEndian::read_u32(&b[j..]),
+            ),
         );
     }
     r
@@ -125,8 +138,10 @@ fn fnv128(a: [u8; 128], b: [u8; 128]) -> [u8; 128] {
 
         LittleEndian::write_u32(
             &mut r[j..],
-            fnv(LittleEndian::read_u32(&a[j..]),
-                LittleEndian::read_u32(&b[j..]))
+            fnv(
+                LittleEndian::read_u32(&a[j..]),
+                LittleEndian::read_u32(&b[j..]),
+            ),
         );
     }
     r
@@ -146,14 +161,14 @@ pub fn calc_dataset_item(cache: &[u8], i: usize) -> H512 {
     LittleEndian::write_u32(mix.as_mut(), mix_first32);
     {
         let mut remix = [0u8; 64];
-        for j in 0..64 {
-            remix[j] = mix[j];
-        }
+        remix.copy_from_slice(&mix);
         fill_sha512(&remix, &mut mix, 0);
     }
     for j in 0..DATASET_PARENTS {
-        let cache_index = fnv((i.bitxor(j) & (u32::max_value() as usize)) as u32,
-                              LittleEndian::read_u32(&mix[(j % r * 4)..])) as usize;
+        let cache_index = fnv(
+            (i.bitxor(j) & (u32::max_value() as usize)) as u32,
+            LittleEndian::read_u32(&mix[(j % r * 4)..]),
+        ) as usize;
         let mut item = [0u8; 64];
         let cache_index = cache_index % n;
         for i in 0..64 {
@@ -166,21 +181,52 @@ pub fn calc_dataset_item(cache: &[u8], i: usize) -> H512 {
     H512::from(z)
 }
 
+#[cfg(not(feature = "std"))]
 /// Make an Ethash dataset using the given hash.
 pub fn make_dataset(dataset: &mut [u8], cache: &[u8]) {
     let n = dataset.len() / HASH_BYTES;
     for i in 0..n {
         let z = calc_dataset_item(cache, i);
-        for j in 0..64 {
-            dataset[i * 64 + j] = z[j];
-        }
+        let from = i * 64;
+        let to = from + 64;
+        dataset[from..to].copy_from_slice(z.as_bytes());
     }
+}
+
+#[cfg(feature = "std")]
+pub fn make_dataset(dataset: &mut [u8], cache: &[u8]) {
+    use rayon::prelude::*;
+
+    let n = dataset.len() / HASH_BYTES;
+    let cache = cache.to_owned(); // copy/clone the cache once.
+    let dataset = parking_lot::Mutex::new(dataset);
+
+    // setup rayon thread pool.
+    let _ = rayon::ThreadPoolBuilder::new()
+        .num_threads(num_cpus::get())
+        .build_global()
+        .is_ok();
+
+    // start the party
+    (0..n)
+        .into_par_iter()
+        .map(|i| calc_dataset_item(&cache, i))
+        .enumerate()
+        .for_each(|(i, z)| {
+            let from = i * 64;
+            let to = from + 64;
+            let mut d = dataset.lock();
+            d[from..to].copy_from_slice(z.as_bytes());
+        });
 }
 
 /// "Main" function of Ethash, calculating the mix digest and result given the
 /// header and nonce.
 pub fn hashimoto<F: Fn(usize) -> H512>(
-    header_hash: H256, nonce: H64, full_size: usize, lookup: F
+    header_hash: H256,
+    nonce: H64,
+    full_size: usize,
+    lookup: F,
 ) -> (H256, H256) {
     hashimoto_with_hasher(
         header_hash,
@@ -200,12 +246,21 @@ pub fn hashimoto<F: Fn(usize) -> H512>(
             let mut res = [0u8; 64];
             res.copy_from_slice(hasher.result().as_slice());
             res
-        }
+        },
     )
 }
 
-pub fn hashimoto_with_hasher<F: Fn(usize) -> H512, HF256: Fn(&[u8]) -> [u8; 32], HF512: Fn(&[u8]) -> [u8; 64]>(
-    header_hash: H256, nonce: H64, full_size: usize, lookup: F, hasher256: HF256, hasher512: HF512
+pub fn hashimoto_with_hasher<
+    F: Fn(usize) -> H512,
+    HF256: Fn(&[u8]) -> [u8; 32],
+    HF512: Fn(&[u8]) -> [u8; 64],
+>(
+    header_hash: H256,
+    nonce: H64,
+    full_size: usize,
+    lookup: F,
+    hasher256: HF256,
+    hasher512: HF512,
 ) -> (H256, H256) {
     let n = full_size / HASH_BYTES;
     let w = MIX_BYTES / WORD_BYTES;
@@ -225,9 +280,12 @@ pub fn hashimoto_with_hasher<F: Fn(usize) -> H512, HF256: Fn(&[u8]) -> [u8; 32],
     }
 
     for i in 0..ACCESSES {
-        let p = (fnv((i as u32).bitxor(LittleEndian::read_u32(s.as_ref())),
-                     LittleEndian::read_u32(&mix[(i % w * 4)..]))
-                 as usize) % (n / MIXHASHES) * MIXHASHES;
+        let p = (fnv(
+            (i as u32).bitxor(LittleEndian::read_u32(s.as_ref())),
+            LittleEndian::read_u32(&mix[(i % w * 4)..]),
+        ) as usize)
+            % (n / MIXHASHES)
+            * MIXHASHES;
         let mut newdata = [0u8; MIX_BYTES];
         for j in 0..MIXHASHES {
             let v = lookup(p + j);
@@ -240,8 +298,10 @@ pub fn hashimoto_with_hasher<F: Fn(usize) -> H512, HF256: Fn(&[u8]) -> [u8; 32],
     let mut cmix = [0u8; MIX_BYTES / 4];
     for i in 0..(MIX_BYTES / 4 / 4) {
         let j = i * 4;
-        let a = fnv(LittleEndian::read_u32(&mix[(j * 4)..]),
-                    LittleEndian::read_u32(&mix[((j + 1) * 4)..]));
+        let a = fnv(
+            LittleEndian::read_u32(&mix[(j * 4)..]),
+            LittleEndian::read_u32(&mix[((j + 1) * 4)..]),
+        );
         let b = fnv(a, LittleEndian::read_u32(&mix[((j + 2) * 4)..]));
         let c = fnv(b, LittleEndian::read_u32(&mix[((j + 3) * 4)..]));
 
@@ -259,7 +319,10 @@ pub fn hashimoto_with_hasher<F: Fn(usize) -> H512, HF256: Fn(&[u8]) -> [u8; 32],
 /// Ethash used by a light client. Only stores the 16MB cache rather than the
 /// full dataset.
 pub fn hashimoto_light(
-    header_hash: H256, nonce: H64, full_size: usize, cache: &[u8]
+    header_hash: H256,
+    nonce: H64,
+    full_size: usize,
+    cache: &[u8],
 ) -> (H256, H256) {
     hashimoto(header_hash, nonce, full_size, |i| {
         calc_dataset_item(cache, i)
@@ -268,7 +331,10 @@ pub fn hashimoto_light(
 
 /// Ethash used by a full client. Stores the whole dataset in memory.
 pub fn hashimoto_full(
-    header_hash: H256, nonce: H64, full_size: usize, dataset: &[u8]
+    header_hash: H256,
+    nonce: H64,
+    full_size: usize,
+    dataset: &[u8],
 ) -> (H256, H256) {
     hashimoto(header_hash, nonce, full_size, |i| {
         let mut r = [0u8; 64];
@@ -291,7 +357,11 @@ pub fn cross_boundary(val: U256) -> U256 {
 /// Mine a nonce given the header, dataset, and the target. Target is derived
 /// from the difficulty.
 pub fn mine<T: Encodable>(
-    header: &T, full_size: usize, dataset: &[u8], nonce_start: H64, difficulty: U256
+    header: &T,
+    full_size: usize,
+    dataset: &[u8],
+    nonce_start: H64,
+    difficulty: U256,
 ) -> (H64, H256) {
     let target = cross_boundary(difficulty);
     let header = rlp::encode(header).to_vec();
@@ -308,7 +378,7 @@ pub fn mine<T: Encodable>(
                     r[j] = dataset[i * 64 + j];
                 }
                 H512::from(r)
-            }
+            },
         );
         let result_cmp: U256 = result.into_uint();
         if result_cmp <= target {
@@ -330,8 +400,7 @@ pub fn get_seedhash(epoch: usize) -> H256 {
 
 #[cfg(test)]
 mod tests {
-    use crate::{LightDAG, EthereumPatch};
-    use hex_literal::*;
+    use crate::{EthereumPatch, LightDAG};
     use ethereum_types::{H256, H64};
 
     #[test]
@@ -339,8 +408,20 @@ mod tests {
         type DAG = LightDAG<EthereumPatch>;
         let light_dag = DAG::new(0x8947a9.into());
         // bare_hash of block#8996777 on ethereum mainnet
-        let partial_header_hash = H256::from(hex!("3c2e6623b1de8862a927eeeef2b6b25dea6e1d9dad88dca3c239be3959dc384a"));
-        let mixh = light_dag.hashimoto(partial_header_hash, H64::from(hex!("a5d3d0ccc8bb8a29"))).0;
-        assert_eq!(mixh, H256::from(hex!("543bc0769f7d5df30e7633f4a01552c2cee7baace8a6da37fddaa19e49e81209")));
+        let partial_header_hash = H256::from_slice(&hex::decode(
+            "3c2e6623b1de8862a927eeeef2b6b25dea6e1d9dad88dca3c239be3959dc384a"
+        ).unwrap());
+        let mixh = light_dag
+            .hashimoto(
+                partial_header_hash,
+                H64::from_slice(&hex::decode("a5d3d0ccc8bb8a29").unwrap()),
+            )
+            .0;
+        assert_eq!(
+            mixh,
+            H256::from_slice(&hex::decode(
+                "543bc0769f7d5df30e7633f4a01552c2cee7baace8a6da37fddaa19e49e81209"
+            ).unwrap())
+        );
     }
 }

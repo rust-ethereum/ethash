@@ -1,6 +1,8 @@
-use ethereum_types::{H256, H64, U256};
+#[cfg(not(feature = "std"))]
+use alloc::{vec, vec::Vec};
+
 use core::marker::PhantomData;
-use alloc::vec::Vec;
+use ethereum_types::{H256, H64, U256};
 
 pub trait Patch {
     fn epoch_length() -> U256;
@@ -12,12 +14,12 @@ impl Patch for EthereumPatch {
 }
 
 pub struct LightDAG<P: Patch> {
-    epoch: usize,
+    pub epoch: usize,
     pub cache: Vec<u8>,
     #[allow(dead_code)]
     cache_size: usize,
-    full_size: usize,
-    _marker: PhantomData<P>
+    pub full_size: usize,
+    _marker: PhantomData<P>,
 }
 
 impl<P: Patch> LightDAG<P> {
@@ -27,13 +29,15 @@ impl<P: Patch> LightDAG<P> {
         let full_size = crate::get_full_size(epoch);
         let seed = crate::get_seedhash(epoch);
 
-        let mut cache: Vec<u8> = Vec::with_capacity(cache_size);
-        cache.resize(cache_size, 0);
+        let mut cache = vec![0u8; cache_size];
         crate::make_cache(&mut cache, seed);
 
         Self {
-            cache, cache_size, full_size, epoch,
-            _marker: PhantomData
+            cache,
+            cache_size,
+            full_size,
+            epoch,
+            _marker: PhantomData,
         }
     }
 
@@ -51,8 +55,11 @@ impl<P: Patch> LightDAG<P> {
         let full_size = crate::get_full_size(epoch);
 
         Self {
-            cache, cache_size, full_size, epoch,
-            _marker: PhantomData
+            cache,
+            cache_size,
+            full_size,
+            epoch,
+            _marker: PhantomData,
         }
     }
 }
