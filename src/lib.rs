@@ -359,8 +359,8 @@ pub fn get_seedhash(epoch: usize) -> H256 {
 
 #[cfg(test)]
 mod tests {
-    use crate::{EthereumPatch, LightDAG};
-    use ethereum_types::{H256, H64};
+    use crate::{cross_boundary, EthereumPatch, LightDAG};
+    use ethereum_types::{H256, H64, U256};
     use hex_literal::*;
 
     #[test]
@@ -371,14 +371,15 @@ mod tests {
         let partial_header_hash = H256::from(hex!(
             "3c2e6623b1de8862a927eeeef2b6b25dea6e1d9dad88dca3c239be3959dc384a"
         ));
-        let mixh = light_dag
-            .hashimoto(partial_header_hash, H64::from(hex!("a5d3d0ccc8bb8a29")))
-            .0;
+        let (mixh, final_hash) =
+            light_dag.hashimoto(partial_header_hash, H64::from(hex!("a5d3d0ccc8bb8a29")));
         assert_eq!(
             mixh,
             H256::from(hex!(
                 "543bc0769f7d5df30e7633f4a01552c2cee7baace8a6da37fddaa19e49e81209"
             ))
         );
+
+        assert!(U256::from(final_hash.0) <= cross_boundary(2580289863567664_u128.into()));
     }
 }
