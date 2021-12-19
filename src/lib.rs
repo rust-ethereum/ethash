@@ -11,7 +11,7 @@ mod miller_rabin;
 
 use byteorder::{ByteOrder, LittleEndian};
 use core::ops::BitXor;
-pub use dag::{EthereumPatch, LightDAG, Patch};
+pub use dag::LightDAG;
 use ethereum_types::{BigEndianHash, H256, H512, H64, U256, U64};
 use miller_rabin::is_prime;
 use rlp::Encodable;
@@ -359,14 +359,13 @@ pub fn get_seedhash(epoch: usize) -> H256 {
 
 #[cfg(test)]
 mod tests {
-    use crate::{cross_boundary, EthereumPatch, LightDAG};
+    use crate::{cross_boundary, LightDAG};
     use ethereum_types::{H256, H64, U256};
     use hex_literal::*;
 
     #[test]
     fn hashimoto_should_work() {
-        type Dag = LightDAG<EthereumPatch>;
-        let light_dag = Dag::new(0x8947a9.into());
+        let light_dag = LightDAG::new(0x8947a9.into());
         // bare_hash of block#8996777 on ethereum mainnet
         let partial_header_hash = H256::from(hex!(
             "3c2e6623b1de8862a927eeeef2b6b25dea6e1d9dad88dca3c239be3959dc384a"
