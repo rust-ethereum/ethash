@@ -12,7 +12,8 @@ mod miller_rabin;
 use byteorder::{ByteOrder, LittleEndian};
 use core::ops::BitXor;
 pub use dag::LightDAG;
-use ethereum_types::{BigEndianHash, H256, H512, H64, U256, U64};
+use ethereum_types::{BigEndianHash, H256, H512, H64, U64};
+use ethnum::U256;
 use miller_rabin::is_prime;
 use rlp::Encodable;
 use sha3::{Digest, Keccak256, Keccak512};
@@ -306,10 +307,10 @@ pub fn hashimoto_full(
 
 /// Convert across boundary. `f(x) = 2 ^ 256 / x`.
 pub fn cross_boundary(val: U256) -> U256 {
-    if val <= U256::one() {
-        U256::max_value()
+    if val <= U256::ONE {
+        U256::MAX
     } else {
-        ((U256::one() << 255) / val) << 1
+        ((U256::ONE << 255) / val) << 1
     }
 }
 
@@ -339,7 +340,7 @@ pub fn mine<T: Encodable>(
                 H512::from(r)
             },
         );
-        let result_cmp: U256 = result.into_uint();
+        let result_cmp = U256::from_be_bytes(result.0);
         if result_cmp <= target {
             return (nonce_current, result);
         }
@@ -360,7 +361,8 @@ pub fn get_seedhash(epoch: usize) -> H256 {
 #[cfg(test)]
 mod tests {
     use crate::{cross_boundary, LightDAG};
-    use ethereum_types::{H256, H64, U256};
+    use ethereum_types::{H256, H64};
+    use ethnum::U256;
     use hex_literal::*;
 
     #[test]
@@ -379,6 +381,6 @@ mod tests {
             ))
         );
 
-        assert!(U256::from(final_hash.0) <= cross_boundary(2580289863567664_u128.into()));
+        assert!(U256::from_be_bytes(final_hash.0) <= cross_boundary(2580289863567664_u128.into()));
     }
 }
