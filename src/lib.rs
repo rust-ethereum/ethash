@@ -10,12 +10,13 @@ mod dag;
 mod miller_rabin;
 
 use byteorder::{ByteOrder, LittleEndian};
+use bytes::BytesMut;
 use core::ops::BitXor;
 pub use dag::LightDAG;
 use ethereum_types::{BigEndianHash, H256, H512, H64, U64};
 use ethnum::U256;
+use fastrlp::Encodable;
 use miller_rabin::is_prime;
-use rlp::Encodable;
 use sha3::{Digest, Keccak256, Keccak512};
 
 pub const DATASET_BYTES_INIT: usize = 1073741824; // 2 to the power of 30.
@@ -324,12 +325,14 @@ pub fn mine<T: Encodable>(
     difficulty: U256,
 ) -> (H64, H256) {
     let target = cross_boundary(difficulty);
-    let header = rlp::encode(header).to_vec();
+
+    let mut encoded = BytesMut::new();
+    header.encode(&mut encoded);
 
     let mut nonce_current = nonce_start;
     loop {
         let (_, result) = hashimoto(
-            H256::from_slice(Keccak256::digest(&header).as_slice()),
+            H256::from_slice(Keccak256::digest(&encoded).as_slice()),
             nonce_current,
             full_size,
             |i| {

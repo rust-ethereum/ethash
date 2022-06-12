@@ -7,12 +7,13 @@ license = "Apache-2.0"
 edition = "2021"
 
 [dependencies]
+bytes = "1"
 ethereum-types = { version = "0.13", default-features = false }
 ethnum = { version = "1", default-features = false }
 primitive-types = { version = "0.11", default-features = false, features = [
   "rlp",
 ] }
-rlp = { version = "0.5", default-features = false }
+fastrlp = { version = "0.1", default-features = false }
 byteorder = { version = "1", default-features = false }
 sha3 = { version = "0.10", default-features = false }
 
